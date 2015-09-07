@@ -1,0 +1,35 @@
+---
+- hosts: swarm
+  tasks:
+    - name: install GlusterFS server
+      apt: name=glusterfs-server
+    - name: ensure GlusterFS server is active
+      service: name=glusterfs-server state=started
+
+    - name: install gunicorn
+      apt: name=gunicorn
+    - name: get glusterfs-rest from Github
+      git: repo=https://github.com/aravindavk/glusterfs-rest.git dest=/tmp/glusterfs-rest
+    - name: install glusterfs-rest
+      command: "{{item}} chdir=/tmp/glusterfs-rest creates=/usr/bin/glusterrestd"
+      with_items:
+        - python setup.py install
+        - glusterrest install
+    - name: start glusterrest service in background
+      command: glusterrestd -D
+    - name: create glusterrest user
+      shell: glusterrest useradd -p {{glusterrest_password}} -g glusteradmin docker; return 0
+
+    - name: install unzip
+      apt: name=unzip
+    - name: download docker-volume-glusterfs
+      command: "{{item}} creates=/usr/local/bin/docker-volume-glusterfs chdir=/tmp"
+      with_items:
+        - curl -L -O archive.zip https://gobuilder.me/get/github.com/calavera/docker-volume-glusterfs/docker-volume-glusterfs_master_linux-arm.zip
+        - unzip archive.zip
+        - mv docker-volume-glusterfs/docker-volume-glusterfs /usr/local/bin/
+        - rm archive.zip
+    - name: start docker-volume-glusterfs in background
+      shell: nohup docker-volume-glusterfs -servers {% for host in groups['swarm'] %}{{ hostvars[host]['ansible_eth0']['ipv4']['address'] }}{% if not loop.last %}:{% endif %}{% endfor %} -rest http://docker:{{glusterrest_password}}@127.0.0.1:9000 -gfs-base /var/lib/gluster/volumes 2>&1 >/var/log/docker-volume-glusterfs.log &
+    - name: create gluster volume directory
+      file: path=/var/lib/gluster/volumes state=directory
